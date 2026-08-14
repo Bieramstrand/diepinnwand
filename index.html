@@ -657,6 +657,22 @@ document.getElementById('resetLink').onclick = async ()=>{
 };
 
 loadTasks();
+
+// Automatischer Hintergrund-Sync alle 5 Sekunden, wie beim Einkaufszettel.
+// Pausiert, solange gerade ein Formular (neue Aufgabe / Foto) offen ist,
+// damit nichts während der Eingabe überschrieben wird.
+async function syncTick(){
+  if(overlay.classList.contains('show')) return;
+  try{
+    const result = await window.storage.get('tasks', true);
+    const fresh = result && result.value ? JSON.parse(result.value) : [];
+    tasks = fresh;
+    render();
+  }catch(err){
+    // still fehlschlagen, naechster Tick versucht's erneut
+  }
+}
+setInterval(syncTick, 5000);
 </script>
 </body>
 </html>
