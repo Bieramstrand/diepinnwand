@@ -235,6 +235,7 @@
   }
   .mini-btn.done{background:var(--teal); color:#fff;}
   .mini-btn.after{background:var(--ochre-soft); color:var(--ochre);}
+  .mini-btn.edit{background:var(--sage-soft); color:var(--sage);}
   .mini-btn.del{background:transparent; color:var(--pin); border:1px solid rgba(200,90,74,0.3);}
 
   .overlay{
@@ -396,9 +397,7 @@
     async get(key, shared) {
       const snap = await db.collection(COLLECTION).doc(key).get();
       if (!snap.exists) return null;
-      let value = snap.data().value;
-      if (value !== null && typeof value !== 'string') { value = JSON.stringify(value); }
-      return { key, value, shared: !!shared };
+      return { key, value: snap.data().value, shared: !!shared };
     },
     async set(key, value, shared) {
       await db.collection(COLLECTION).doc(key).set({ value, updatedAt: Date.now() });
@@ -421,6 +420,7 @@
 <script>
 const CATEGORIES = ["Küche","Bad","Wohnzimmer","Garten","Sonstiges"];
 let tasks = [];
+let photoCache = {};
 let pendingPhoto = null;
 
 const overlay = document.getElementById('overlay');
@@ -470,7 +470,31 @@ async function loadTasks(){
   }catch(err){
     tasks = [];
   }
+  await migrateOldPhotos();
+  await loadPhotos(tasks.map(t=>t.id));
   render();
+}
+
+async function migrateOldPhotos(){
+  const legacy = tasks.filter(t=>t.photoBefore || t.photoAfter);
+  if(legacy.length === 0) return;
+  await Promise.all(legacy.map(t=>
+    savePhoto(t.id, { photoBefore: t.photoBefore || null, photoAfter: t.photoAfter || null })
+  ));
+  tasks = tasks.map(({photoBefore, photoAfter, ...rest})=>rest);
+  await saveTasks();
+}
+
+async function loadPhotos(ids){
+  const results = await Promise.all(ids.map(async id=>{
+    try{
+      const r = await window.storage.get('task-photo:'+id, true);
+      return [id, r && r.value ? JSON.parse(r.value) : null];
+    }catch(err){
+      return [id, null];
+    }
+  }));
+  results.forEach(([id, val])=>{ if(val) photoCache[id] = val; });
 }
 
 async function saveTasks(){
@@ -479,6 +503,15 @@ async function saveTasks(){
     if(!result){ showToast('Speichern fehlgeschlagen'); }
   }catch(err){
     showToast('Speichern fehlgeschlagen');
+  }
+}
+
+async function savePhoto(id, photoData){
+  try{
+    await window.storage.set('task-photo:'+id, JSON.stringify(photoData), true);
+    photoCache[id] = photoData;
+  }catch(err){
+    showToast('Foto speichern fehlgeschlagen');
   }
 }
 
@@ -498,12 +531,14 @@ function render(){
 
   document.querySelectorAll('[data-done]').forEach(b=>b.onclick = ()=>markDone(b.dataset.done));
   document.querySelectorAll('[data-after]').forEach(b=>b.onclick = ()=>openAfterPhoto(b.dataset.after));
+  document.querySelectorAll('[data-edit]').forEach(b=>b.onclick = ()=>openEditTask(b.dataset.edit));
   document.querySelectorAll('[data-del]').forEach(b=>b.onclick = ()=>deleteTask(b.dataset.del));
 }
 
 function cardHtml(t){
   const rot = (t.id.charCodeAt(0)%2===0? 1:-1) * (0.4 + (t.id.charCodeAt(1)%5)/10);
   const date = new Date(t.createdAt).toLocaleDateString('de-DE', {day:'2-digit', month:'2-digit'});
+  const photos = photoCache[t.id] || {};
   return `
   <div class="card polaroid" style="--rot:${rot}deg">
     <div class="card-top">
@@ -513,20 +548,21 @@ function cardHtml(t){
       </div>
       <span class="badge ${t.status}">${t.status}</span>
     </div>
-    ${(t.photoBefore || t.photoAfter) ? `
+    ${(photos.photoBefore || photos.photoAfter) ? `
     <div class="photos">
       <div class="photo-box">
-        ${t.photoBefore ? `<img src="${t.photoBefore}">` : `<div class="photo-placeholder">–</div>`}
+        ${photos.photoBefore ? `<img src="${photos.photoBefore}">` : `<div class="photo-placeholder">–</div>`}
         <div class="ph-label">Vorher</div>
       </div>
       <div class="photo-box">
-        ${t.photoAfter ? `<img src="${t.photoAfter}">` : `<div class="photo-placeholder">–</div>`}
+        ${photos.photoAfter ? `<img src="${photos.photoAfter}">` : `<div class="photo-placeholder">–</div>`}
         <div class="ph-label">Nachher</div>
       </div>
     </div>` : ''}
     <div class="card-actions">
       ${t.status==='offen' ? `<button class="mini-btn done" data-done="${t.id}">Als erledigt markieren</button>` : ''}
-      ${t.status==='erledigt' && !t.photoAfter ? `<button class="mini-btn after" data-after="${t.id}">Nachher Foto</button>` : ''}
+      ${t.status==='erledigt' && !photos.photoAfter ? `<button class="mini-btn after" data-after="${t.id}">Nachher Foto</button>` : ''}
+      <button class="mini-btn edit" data-edit="${t.id}">Bearbeiten</button>
       <button class="mini-btn del" data-del="${t.id}">Löschen</button>
     </div>
   </div>`;
@@ -550,8 +586,10 @@ async function markDone(id){
 
 async function deleteTask(id){
   tasks = tasks.filter(x=>x.id!==id);
+  delete photoCache[id];
   render();
   await saveTasks();
+  try{ await window.storage.delete('task-photo:'+id, true); }catch(err){}
   showToast('Aufgabe gelöscht');
 }
 
@@ -579,16 +617,93 @@ function openAfterPhoto(id){
   };
   document.getElementById('cancelAfter').onclick = closeSheet;
   document.getElementById('saveAfter').onclick = async ()=>{
-    const t = tasks.find(x=>x.id===id);
-    if(t && photoData) t.photoAfter = photoData;
+    if(photoData){
+      const existing = photoCache[id] || {};
+      await savePhoto(id, { photoBefore: existing.photoBefore || null, photoAfter: photoData });
+    }
     closeSheet();
     render();
-    await saveTasks();
     showToast('Foto gespeichert');
   };
 }
 
+function openEditTask(id){
+  const t = tasks.find(x=>x.id===id);
+  if(!t) return;
+  const photos = photoCache[id] || {};
+  let newBefore = null, newAfter = null;
+  sheet.innerHTML = `
+    <h2>Aufgabe bearbeiten</h2>
+    <div class="field">
+      <label>Titel</label>
+      <input type="text" id="editTitle" value="${escapeAttr(t.title)}">
+    </div>
+    <div class="field">
+      <label>Bereich</label>
+      <select id="editCategory">
+        ${CATEGORIES.map(c=>`<option value="${c}" ${c===t.category?'selected':''}>${c}</option>`).join('')}
+      </select>
+    </div>
+    <div class="field">
+      <label>Vorher Foto</label>
+      <div class="photo-input-area" id="editBeforeArea">
+        ${photos.photoBefore ? `<img src="${photos.photoBefore}">` : `<p class="hint">Tippen um ein Foto hinzuzufügen</p>`}
+        <input type="file" accept="image/*" capture="environment" id="editBeforeInput">
+      </div>
+    </div>
+    <div class="field">
+      <label>Nachher Foto</label>
+      <div class="photo-input-area" id="editAfterArea">
+        ${photos.photoAfter ? `<img src="${photos.photoAfter}">` : `<p class="hint">Tippen um ein Foto hinzuzufügen</p>`}
+        <input type="file" accept="image/*" capture="environment" id="editAfterInput">
+      </div>
+    </div>
+    <div class="sheet-actions">
+      <button class="btn btn-cancel" id="cancelEdit">Abbrechen</button>
+      <button class="btn btn-save" id="saveEdit">Speichern</button>
+    </div>
+  `;
+  overlay.classList.add('show');
+
+  document.getElementById('editBeforeInput').onchange = async (e)=>{
+    const file = e.target.files[0];
+    if(!file) return;
+    newBefore = await compressImage(file);
+    document.getElementById('editBeforeArea').innerHTML = `<img src="${newBefore}">`;
+  };
+  document.getElementById('editAfterInput').onchange = async (e)=>{
+    const file = e.target.files[0];
+    if(!file) return;
+    newAfter = await compressImage(file);
+    document.getElementById('editAfterArea').innerHTML = `<img src="${newAfter}">`;
+  };
+
+  document.getElementById('cancelEdit').onclick = closeSheet;
+  document.getElementById('saveEdit').onclick = async ()=>{
+    const title = document.getElementById('editTitle').value.trim();
+    if(!title){ showToast('Bitte einen Titel eingeben'); return; }
+    t.title = title;
+    t.category = document.getElementById('editCategory').value;
+    closeSheet();
+    render();
+    await saveTasks();
+    if(newBefore || newAfter){
+      await savePhoto(id, {
+        photoBefore: newBefore || photos.photoBefore || null,
+        photoAfter: newAfter || photos.photoAfter || null
+      });
+      render();
+    }
+    showToast('Aufgabe aktualisiert');
+  };
+}
+
+function escapeAttr(s){
+  return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;');
+}
+
 function openTaskForm(withPhoto){
+  let pendingAfter = null;
   sheet.innerHTML = `
     <h2>${withPhoto ? 'Aufgabe mit Foto' : 'Neue Aufgabe'}</h2>
     ${withPhoto ? `
@@ -597,6 +712,13 @@ function openTaskForm(withPhoto){
       <div class="photo-input-area" id="photoArea">
         <p class="hint">Tippen um ein Foto aufzunehmen</p>
         <input type="file" accept="image/*" capture="environment" id="photoInput">
+      </div>
+    </div>
+    <div class="field">
+      <label>Nachher Foto (optional)</label>
+      <div class="photo-input-area" id="photoAfterArea">
+        <p class="hint">Tippen um ein Foto aufzunehmen</p>
+        <input type="file" accept="image/*" capture="environment" id="photoAfterInput">
       </div>
     </div>` : ''}
     <div class="field">
@@ -623,6 +745,12 @@ function openTaskForm(withPhoto){
       pendingPhoto = await compressImage(file);
       document.getElementById('photoArea').innerHTML = `<img src="${pendingPhoto}">`;
     };
+    document.getElementById('photoAfterInput').onchange = async (e)=>{
+      const file = e.target.files[0];
+      if(!file) return;
+      pendingAfter = await compressImage(file);
+      document.getElementById('photoAfterArea').innerHTML = `<img src="${pendingAfter}">`;
+    };
   }
 
   document.getElementById('cancelTask').onclick = closeSheet;
@@ -634,11 +762,12 @@ function openTaskForm(withPhoto){
       id: 't' + Date.now() + Math.random().toString(36).slice(2,7),
       title, category,
       status: 'offen',
-      createdAt: Date.now(),
-      photoBefore: pendingPhoto || null,
-      photoAfter: null
+      createdAt: Date.now()
     };
     tasks.push(newTask);
+    if(pendingPhoto || pendingAfter){
+      await savePhoto(newTask.id, { photoBefore: pendingPhoto || null, photoAfter: pendingAfter || null });
+    }
     closeSheet();
     render();
     await saveTasks();
@@ -652,29 +781,16 @@ overlay.onclick = (e)=>{ if(e.target === overlay) closeSheet(); };
 
 document.getElementById('resetLink').onclick = async ()=>{
   if(!confirm('Wirklich alle Aufgaben löschen?')) return;
+  const ids = tasks.map(t=>t.id);
   tasks = [];
+  photoCache = {};
   render();
   await saveTasks();
+  await Promise.all(ids.map(id=>window.storage.delete('task-photo:'+id, true).catch(()=>{})));
   showToast('Zurückgesetzt');
 };
 
 loadTasks();
-
-// Automatischer Hintergrund-Sync alle 5 Sekunden, wie beim Einkaufszettel.
-// Pausiert, solange gerade ein Formular (neue Aufgabe / Foto) offen ist,
-// damit nichts während der Eingabe überschrieben wird.
-async function syncTick(){
-  if(overlay.classList.contains('show')) return;
-  try{
-    const result = await window.storage.get('tasks', true);
-    const fresh = result && result.value ? JSON.parse(result.value) : [];
-    tasks = fresh;
-    render();
-  }catch(err){
-    // still fehlschlagen, naechster Tick versucht's erneut
-  }
-}
-setInterval(syncTick, 5000);
 </script>
 </body>
 </html>
