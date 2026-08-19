@@ -170,6 +170,11 @@
     font-size:1.02rem;
     margin:0 0 2px;
   }
+  .card-title .no-title{
+    font-style:italic;
+    color:var(--ink-soft);
+    font-weight:500;
+  }
   .card-meta{
     font-family:'JetBrains Mono', monospace;
     font-size:0.7rem;
@@ -217,6 +222,11 @@
     justify-content:center;
     color:rgba(0,0,0,0.28);
     font-size:1.4rem;
+    cursor:pointer;
+    position:relative;
+  }
+  .photo-placeholder input{
+    position:absolute; inset:0; opacity:0; cursor:pointer;
   }
   .card-actions{
     display:flex;
@@ -418,7 +428,7 @@
   };
 </script>
 <script>
-const CATEGORIES = ["Küche","Bad","Wohnzimmer","Garten","Sonstiges"];
+const CATEGORIES = ["Küche","Bad","Wohnzimmer","Schlafzimmer","Kinderzimmer","Büro","Flur 2. Etage","Garten","Sonstiges"];
 let tasks = [];
 let photoCache = {};
 let pendingPhoto = null;
@@ -530,9 +540,23 @@ function render(){
     '<div class="empty"><span>✅</span>Noch keine Aufgabe erledigt.</div>';
 
   document.querySelectorAll('[data-done]').forEach(b=>b.onclick = ()=>markDone(b.dataset.done));
-  document.querySelectorAll('[data-after]').forEach(b=>b.onclick = ()=>openAfterPhoto(b.dataset.after));
+  document.querySelectorAll('[data-quick-input]').forEach(inp=>inp.onchange = (e)=>quickAddPhoto(inp.dataset.quickInput, e.target.files[0]));
   document.querySelectorAll('[data-edit]').forEach(b=>b.onclick = ()=>openEditTask(b.dataset.edit));
   document.querySelectorAll('[data-del]').forEach(b=>b.onclick = ()=>deleteTask(b.dataset.del));
+}
+
+async function quickAddPhoto(key, file){
+  if(!file) return;
+  const [id, slot] = key.split(':');
+  const compressed = await compressImage(file);
+  const existing = photoCache[id] || {};
+  const updated = {
+    photoBefore: slot === 'before' ? compressed : (existing.photoBefore || null),
+    photoAfter: slot === 'after' ? compressed : (existing.photoAfter || null)
+  };
+  await savePhoto(id, updated);
+  render();
+  showToast('Foto gespeichert');
 }
 
 function cardHtml(t){
@@ -543,25 +567,27 @@ function cardHtml(t){
   <div class="card polaroid" style="--rot:${rot}deg">
     <div class="card-top">
       <div>
-        <p class="card-title">${escapeHtml(t.title)}</p>
+        <p class="card-title">${t.title ? escapeHtml(t.title) : '<span class="no-title">Ohne Titel</span>'}</p>
         <p class="card-meta">${t.category} · ${date}</p>
       </div>
       <span class="badge ${t.status}">${t.status}</span>
     </div>
-    ${(photos.photoBefore || photos.photoAfter) ? `
     <div class="photos">
       <div class="photo-box">
-        ${photos.photoBefore ? `<img src="${photos.photoBefore}">` : `<div class="photo-placeholder">–</div>`}
+        ${photos.photoBefore
+          ? `<img src="${photos.photoBefore}">`
+          : `<label class="photo-placeholder" data-quick="${t.id}:before">+<input type="file" accept="image/*" data-quick-input="${t.id}:before"></label>`}
         <div class="ph-label">Vorher</div>
       </div>
       <div class="photo-box">
-        ${photos.photoAfter ? `<img src="${photos.photoAfter}">` : `<div class="photo-placeholder">–</div>`}
+        ${photos.photoAfter
+          ? `<img src="${photos.photoAfter}">`
+          : `<label class="photo-placeholder" data-quick="${t.id}:after">+<input type="file" accept="image/*" data-quick-input="${t.id}:after"></label>`}
         <div class="ph-label">Nachher</div>
       </div>
-    </div>` : ''}
+    </div>
     <div class="card-actions">
       ${t.status==='offen' ? `<button class="mini-btn done" data-done="${t.id}">Als erledigt markieren</button>` : ''}
-      ${t.status==='erledigt' && !photos.photoAfter ? `<button class="mini-btn after" data-after="${t.id}">Nachher Foto</button>` : ''}
       <button class="mini-btn edit" data-edit="${t.id}">Bearbeiten</button>
       <button class="mini-btn del" data-del="${t.id}">Löschen</button>
     </div>
@@ -593,40 +619,6 @@ async function deleteTask(id){
   showToast('Aufgabe gelöscht');
 }
 
-function openAfterPhoto(id){
-  sheet.innerHTML = `
-    <h2>Nachher Foto hinzufügen</h2>
-    <div class="field">
-      <div class="photo-input-area" id="afterPhotoArea">
-        <p class="hint">Tippen um ein Foto aufzunehmen oder auszuwählen</p>
-        <input type="file" accept="image/*" capture="environment" id="afterPhotoInput">
-      </div>
-    </div>
-    <div class="sheet-actions">
-      <button class="btn btn-cancel" id="cancelAfter">Abbrechen</button>
-      <button class="btn btn-save" id="saveAfter">Speichern</button>
-    </div>
-  `;
-  overlay.classList.add('show');
-  let photoData = null;
-  document.getElementById('afterPhotoInput').onchange = async (e)=>{
-    const file = e.target.files[0];
-    if(!file) return;
-    photoData = await compressImage(file);
-    document.getElementById('afterPhotoArea').innerHTML = `<img src="${photoData}">`;
-  };
-  document.getElementById('cancelAfter').onclick = closeSheet;
-  document.getElementById('saveAfter').onclick = async ()=>{
-    if(photoData){
-      const existing = photoCache[id] || {};
-      await savePhoto(id, { photoBefore: existing.photoBefore || null, photoAfter: photoData });
-    }
-    closeSheet();
-    render();
-    showToast('Foto gespeichert');
-  };
-}
-
 function openEditTask(id){
   const t = tasks.find(x=>x.id===id);
   if(!t) return;
@@ -648,14 +640,14 @@ function openEditTask(id){
       <label>Vorher Foto</label>
       <div class="photo-input-area" id="editBeforeArea">
         ${photos.photoBefore ? `<img src="${photos.photoBefore}">` : `<p class="hint">Tippen um ein Foto hinzuzufügen</p>`}
-        <input type="file" accept="image/*" capture="environment" id="editBeforeInput">
+        <input type="file" accept="image/*" id="editBeforeInput">
       </div>
     </div>
     <div class="field">
       <label>Nachher Foto</label>
       <div class="photo-input-area" id="editAfterArea">
         ${photos.photoAfter ? `<img src="${photos.photoAfter}">` : `<p class="hint">Tippen um ein Foto hinzuzufügen</p>`}
-        <input type="file" accept="image/*" capture="environment" id="editAfterInput">
+        <input type="file" accept="image/*" id="editAfterInput">
       </div>
     </div>
     <div class="sheet-actions">
@@ -681,7 +673,6 @@ function openEditTask(id){
   document.getElementById('cancelEdit').onclick = closeSheet;
   document.getElementById('saveEdit').onclick = async ()=>{
     const title = document.getElementById('editTitle').value.trim();
-    if(!title){ showToast('Bitte einen Titel eingeben'); return; }
     t.title = title;
     t.category = document.getElementById('editCategory').value;
     closeSheet();
@@ -711,18 +702,18 @@ function openTaskForm(withPhoto){
       <label>Vorher Foto</label>
       <div class="photo-input-area" id="photoArea">
         <p class="hint">Tippen um ein Foto aufzunehmen</p>
-        <input type="file" accept="image/*" capture="environment" id="photoInput">
+        <input type="file" accept="image/*" id="photoInput">
       </div>
     </div>
     <div class="field">
       <label>Nachher Foto (optional)</label>
       <div class="photo-input-area" id="photoAfterArea">
         <p class="hint">Tippen um ein Foto aufzunehmen</p>
-        <input type="file" accept="image/*" capture="environment" id="photoAfterInput">
+        <input type="file" accept="image/*" id="photoAfterInput">
       </div>
     </div>` : ''}
     <div class="field">
-      <label>Titel</label>
+      <label>Titel (optional)</label>
       <input type="text" id="taskTitle" placeholder="z. B. Geschirrspüler ausräumen">
     </div>
     <div class="field">
@@ -756,7 +747,6 @@ function openTaskForm(withPhoto){
   document.getElementById('cancelTask').onclick = closeSheet;
   document.getElementById('saveTask').onclick = async ()=>{
     const title = document.getElementById('taskTitle').value.trim();
-    if(!title){ showToast('Bitte einen Titel eingeben'); return; }
     const category = document.getElementById('taskCategory').value;
     const newTask = {
       id: 't' + Date.now() + Math.random().toString(36).slice(2,7),
