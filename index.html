@@ -567,8 +567,8 @@ async function savePhoto(id, photoData){
 function render(){
   const open = tasks.filter(t=>t.status==='offen').sort((a,b)=>b.createdAt-a.createdAt);
   const doneAll = tasks.filter(t=>t.status==='erledigt').sort((a,b)=>(b.doneAt||b.createdAt)-(a.doneAt||a.createdAt));
-  const done = doneAll.slice(0, 5);
-  const archived = doneAll.slice(5);
+  const done = doneAll.slice(0, 3);
+  const archived = doneAll.slice(3);
   document.getElementById('statOpen').textContent = open.length;
   document.getElementById('statDone').textContent = doneAll.length;
 
