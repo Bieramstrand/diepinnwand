@@ -137,6 +137,32 @@
     font-size:0.9rem;
   }
   .empty span{display:block; font-size:2rem; margin-bottom:8px;}
+  .archive-link{
+    text-align:center;
+    padding:14px;
+    margin-top:6px;
+    color:var(--teal);
+    font-size:0.8rem;
+    font-weight:600;
+    cursor:pointer;
+    background:var(--card);
+    border-radius:10px;
+    box-shadow:var(--shadow);
+  }
+  .archive-item{
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+    gap:10px;
+    padding:12px 0;
+    border-bottom:1px solid rgba(0,0,0,0.08);
+  }
+  .archive-item-title{
+    font-weight:600;
+    font-size:0.92rem;
+    margin:0 0 2px;
+  }
+  .archive-item .mini-btn{flex:none; padding:8px 14px;}
   .card{
     background:var(--card);
     border-radius:4px;
@@ -428,7 +454,7 @@
   };
 </script>
 <script>
-const CATEGORIES = ["Küche","Bad","Wohnzimmer","Schlafzimmer","Kinderzimmer","Büro","Flur 2. Etage","Garten","Sonstiges"];
+const CATEGORIES = ["Sonstiges","Küche","Bad","Wohnzimmer","Schlafzimmer","Kinderzimmer","Büro","Flur 2. Etage","Garten"];
 let tasks = [];
 let photoCache = {};
 let pendingPhoto = null;
@@ -472,6 +498,8 @@ function compressImage(file){
   });
 }
 
+const ARCHIVE_DAYS = 30;
+
 async function loadTasks(){
   document.getElementById('listOpen').innerHTML = '<div class="loading">Lade Aufgaben …</div>';
   try{
@@ -481,8 +509,19 @@ async function loadTasks(){
     tasks = [];
   }
   await migrateOldPhotos();
+  await purgeOldArchive();
   await loadPhotos(tasks.map(t=>t.id));
   render();
+}
+
+async function purgeOldArchive(){
+  const cutoff = Date.now() - ARCHIVE_DAYS * 24 * 60 * 60 * 1000;
+  const expired = tasks.filter(t => t.status === 'erledigt' && (t.doneAt || t.createdAt) < cutoff);
+  if(expired.length === 0) return;
+  const expiredIds = expired.map(t=>t.id);
+  tasks = tasks.filter(t => !expiredIds.includes(t.id));
+  await saveTasks();
+  await Promise.all(expiredIds.map(id => window.storage.delete('task-photo:'+id, true).catch(()=>{})));
 }
 
 async function migrateOldPhotos(){
@@ -527,9 +566,11 @@ async function savePhoto(id, photoData){
 
 function render(){
   const open = tasks.filter(t=>t.status==='offen').sort((a,b)=>b.createdAt-a.createdAt);
-  const done = tasks.filter(t=>t.status==='erledigt').sort((a,b)=>b.createdAt-a.createdAt);
+  const doneAll = tasks.filter(t=>t.status==='erledigt').sort((a,b)=>(b.doneAt||b.createdAt)-(a.doneAt||a.createdAt));
+  const done = doneAll.slice(0, 5);
+  const archived = doneAll.slice(5);
   document.getElementById('statOpen').textContent = open.length;
-  document.getElementById('statDone').textContent = done.length;
+  document.getElementById('statDone').textContent = doneAll.length;
 
   const openEl = document.getElementById('listOpen');
   const doneEl = document.getElementById('listDone');
@@ -538,11 +579,43 @@ function render(){
     '<div class="empty"><span>🧹</span>Gerade nichts zu tun. Neue Aufgabe hinzufügen?</div>';
   doneEl.innerHTML = done.length ? done.map(cardHtml).join('') :
     '<div class="empty"><span>✅</span>Noch keine Aufgabe erledigt.</div>';
+  doneEl.innerHTML += archived.length
+    ? `<div class="archive-link" id="archiveLink">Archiv anzeigen (${archived.length}) · löscht sich automatisch nach ${ARCHIVE_DAYS} Tagen</div>`
+    : '';
 
   document.querySelectorAll('[data-done]').forEach(b=>b.onclick = ()=>markDone(b.dataset.done));
   document.querySelectorAll('[data-quick-input]').forEach(inp=>inp.onchange = (e)=>quickAddPhoto(inp.dataset.quickInput, e.target.files[0]));
   document.querySelectorAll('[data-edit]').forEach(b=>b.onclick = ()=>openEditTask(b.dataset.edit));
   document.querySelectorAll('[data-del]').forEach(b=>b.onclick = ()=>deleteTask(b.dataset.del));
+  const archiveLinkEl = document.getElementById('archiveLink');
+  if(archiveLinkEl) archiveLinkEl.onclick = ()=>openArchive(archived);
+}
+
+function openArchive(archived){
+  sheet.innerHTML = `
+    <h2>Archiv</h2>
+    <p class="hint" style="margin:-8px 0 14px;">Erledigte Aufgaben älter als die letzten 5 · werden nach ${ARCHIVE_DAYS} Tagen automatisch gelöscht</p>
+    ${archived.map(t=>{
+      const date = new Date(t.doneAt || t.createdAt).toLocaleDateString('de-DE', {day:'2-digit', month:'2-digit', year:'numeric'});
+      return `
+      <div class="archive-item">
+        <div>
+          <p class="archive-item-title">${t.title ? escapeHtml(t.title) : '<span class="no-title">Ohne Titel</span>'}</p>
+          <p class="card-meta">${t.category} · erledigt am ${date}</p>
+        </div>
+        <button class="mini-btn del" data-archive-del="${t.id}">Löschen</button>
+      </div>`;
+    }).join('')}
+    <div class="sheet-actions">
+      <button class="btn btn-cancel" id="closeArchive">Schließen</button>
+    </div>
+  `;
+  overlay.classList.add('show');
+  document.getElementById('closeArchive').onclick = closeSheet;
+  document.querySelectorAll('[data-archive-del]').forEach(b=>b.onclick = async ()=>{
+    await deleteTask(b.dataset.archiveDel);
+    closeSheet();
+  });
 }
 
 async function quickAddPhoto(key, file){
