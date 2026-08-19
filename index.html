@@ -286,8 +286,8 @@
     background:var(--card);
     width:100%;
     border-radius:20px 20px 0 0;
-    padding:22px 20px 28px;
-    max-height:85vh;
+    padding:22px 20px max(28px, env(safe-area-inset-bottom));
+    max-height:55vh;
     overflow-y:auto;
   }
   .sheet h2{
@@ -594,7 +594,7 @@ function render(){
 function openArchive(archived){
   sheet.innerHTML = `
     <h2>Archiv</h2>
-    <p class="hint" style="margin:-8px 0 14px;">Erledigte Aufgaben älter als die letzten 5 · werden nach ${ARCHIVE_DAYS} Tagen automatisch gelöscht</p>
+    <p class="hint" style="margin:-8px 0 14px;">Erledigte Aufgaben älter als die letzten 3 · werden nach ${ARCHIVE_DAYS} Tagen automatisch gelöscht</p>
     ${archived.map(t=>{
       const date = new Date(t.doneAt || t.createdAt).toLocaleDateString('de-DE', {day:'2-digit', month:'2-digit', year:'numeric'});
       return `
