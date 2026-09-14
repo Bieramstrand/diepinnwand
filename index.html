@@ -130,6 +130,17 @@
     margin:26px 4px 12px;
     font-weight:700;
   }
+  .done-section{
+    margin-top:32px;
+    padding:18px 14px 8px;
+    background:var(--board-dark);
+    border-radius:16px;
+    border:1px solid rgba(0,0,0,0.06);
+  }
+  .done-label{
+    margin-top:0;
+    color:var(--sage);
+  }
   .empty{
     text-align:center;
     padding:40px 20px;
@@ -173,6 +184,13 @@
   }
   .card.polaroid{
     transform:rotate(var(--rot,-0.8deg));
+  }
+  .card.card-done{
+    border-left:4px solid var(--sage);
+    background:#fbfaf5;
+  }
+  .card.card-done .card-title{
+    color:var(--ink-soft);
   }
   .card::before{
     content:'';
@@ -401,8 +419,10 @@
   <div class="section-label">Zu erledigen</div>
   <div id="listOpen"></div>
 
-  <div class="section-label">Erledigt</div>
-  <div id="listDone"></div>
+  <div class="done-section">
+    <div class="section-label done-label">Erledigt</div>
+    <div id="listDone"></div>
+  </div>
 </main>
 
 <span class="reset-link" id="resetLink">Alle Aufgaben zurücksetzen</span>
@@ -637,7 +657,7 @@ function cardHtml(t){
   const date = new Date(t.createdAt).toLocaleDateString('de-DE', {day:'2-digit', month:'2-digit'});
   const photos = photoCache[t.id] || {};
   return `
-  <div class="card polaroid" style="--rot:${rot}deg">
+  <div class="card polaroid ${t.status==='erledigt' ? 'card-done' : ''}" style="--rot:${rot}deg">
     <div class="card-top">
       <div>
         <p class="card-title">${t.title ? escapeHtml(t.title) : '<span class="no-title">Ohne Titel</span>'}</p>
