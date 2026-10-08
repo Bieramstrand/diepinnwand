@@ -214,6 +214,10 @@
     font-size:1.02rem;
     margin:0 0 2px;
   }
+  .card-meta .due{
+    color:var(--ochre);
+    font-weight:500;
+  }
   .card-title .no-title{
     font-style:italic;
     color:var(--ink-soft);
@@ -661,7 +665,7 @@ function cardHtml(t){
     <div class="card-top">
       <div>
         <p class="card-title">${t.title ? escapeHtml(t.title) : '<span class="no-title">Ohne Titel</span>'}</p>
-        <p class="card-meta">${t.category} · ${date}</p>
+        <p class="card-meta">${t.category} · ${date}${t.dueDate ? ` · <span class="due">📅 Termin ${new Date(t.dueDate+'T12:00').toLocaleDateString('de-DE',{weekday:'short', day:'2-digit', month:'2-digit'})}</span>` : ''}</p>
       </div>
       <span class="badge ${t.status}">${t.status}</span>
     </div>
