@@ -45,6 +45,25 @@
     padding:max(28px, env(safe-area-inset-top)) 20px 18px;
     text-align:center;
   }
+  .reload-btn{
+    display:inline-flex;
+    align-items:center;
+    gap:6px;
+    margin-top:14px;
+    padding:7px 16px;
+    border:none;
+    border-radius:20px;
+    background:rgba(63,106,99,0.12);
+    color:var(--teal-dark);
+    font-family:'Work Sans', sans-serif;
+    font-size:0.8rem;
+    font-weight:600;
+    cursor:pointer;
+  }
+  .reload-btn:active{transform:scale(0.96);}
+  .reload-icon{display:inline-block; font-size:1rem;}
+  .reload-btn.spinning .reload-icon{animation:spin 0.8s linear infinite;}
+  @keyframes spin{to{transform:rotate(360deg);}}
   .back-link{
     display:inline-block;
     font-family:'Work Sans', sans-serif;
@@ -412,6 +431,7 @@
     <div class="stat"><b id="statOpen">0</b>offen</div>
     <div class="stat"><b id="statDone">0</b>erledigt</div>
   </div>
+  <button class="reload-btn" id="reloadBtn" aria-label="Neu laden"><span class="reload-icon">⟳</span> Neu laden</button>
 </header>
 
 <div class="toolbar">
@@ -451,13 +471,17 @@
   };
   firebase.initializeApp(firebaseConfig);
   const db = firebase.firestore();
+  // Lokaler Zwischenspeicher auf dem Gerät: Aufgaben erscheinen sofort, auch bei schlechtem Netz
+  db.enablePersistence({ synchronizeTabs: true }).catch(() => {});
   const COLLECTION = 'household';
 
   window.storage = {
-    async get(key, shared) {
-      const snap = await db.collection(COLLECTION).doc(key).get();
+    async get(key, shared, opts) {
+      const snap = await db.collection(COLLECTION).doc(key).get(opts && opts.cache ? { source: 'cache' } : undefined);
       if (!snap.exists) return null;
-      return { key, value: snap.data().value, shared: !!shared };
+      let value = snap.data().value;
+      if (value !== null && typeof value !== 'string') { value = JSON.stringify(value); }
+      return { key, value, shared: !!shared };
     },
     async set(key, value, shared) {
       await db.collection(COLLECTION).doc(key).set({ value, updatedAt: Date.now() });
@@ -524,18 +548,65 @@ function compressImage(file){
 
 const ARCHIVE_DAYS = 30;
 
+let loadSeq = 0;
+let hasRendered = false;
+
+function withTimeout(promise, ms){
+  return Promise.race([promise, new Promise((_, rej)=>setTimeout(()=>rej(new Error('timeout')), ms))]);
+}
+
+function visibleTaskIds(){
+  // Fotos nur für sichtbare Karten laden: alle offenen + die 3 zuletzt erledigten (Archiv zeigt keine Fotos)
+  const open = tasks.filter(t=>t.status==='offen');
+  const done = tasks.filter(t=>t.status==='erledigt')
+    .sort((a,b)=>(b.doneAt||b.createdAt)-(a.doneAt||a.createdAt)).slice(0,3);
+  return open.concat(done).map(t=>t.id);
+}
+
 async function loadTasks(){
-  document.getElementById('listOpen').innerHTML = '<div class="loading">Lade Aufgaben …</div>';
-  try{
-    const result = await window.storage.get('tasks', true);
-    tasks = result && result.value ? JSON.parse(result.value) : [];
-  }catch(err){
-    tasks = [];
+  const seq = ++loadSeq;
+  if(!hasRendered){
+    document.getElementById('listOpen').innerHTML = '<div class="loading">Lade Aufgaben …</div>';
   }
-  await migrateOldPhotos();
-  await purgeOldArchive();
-  await loadPhotos(tasks.map(t=>t.id));
+
+  // 1. Sofort aus dem Gerätespeicher anzeigen (falls vorhanden)
+  if(!hasRendered){
+    try{
+      const cached = await window.storage.get('tasks', true, { cache: true });
+      if(cached && cached.value && seq === loadSeq){
+        tasks = JSON.parse(cached.value);
+        await loadPhotos(visibleTaskIds(), { cache: true });
+        render(); hasRendered = true;
+      }
+    }catch(err){}
+  }
+
+  // 2. Aktuellen Stand vom Server holen (mit Zeitlimit, damit nichts endlos hängt)
+  try{
+    const result = await withTimeout(window.storage.get('tasks', true), 10000);
+    if(seq !== loadSeq) return;
+    tasks = result && result.value ? JSON.parse(result.value) : [];
+    render(); hasRendered = true;
+  }catch(err){
+    if(seq !== loadSeq) return;
+    if(!hasRendered){
+      document.getElementById('listOpen').innerHTML =
+        '<div class="loading">Verbindung langsam … Aufgaben werden noch geladen.<br>Falls nichts passiert, oben auf ⟳ Neu laden tippen.</div>';
+    }
+    return;
+  }
+
+  // 3. Fotos der sichtbaren Karten im Hintergrund nachladen
+  await loadPhotos(visibleTaskIds());
+  if(seq !== loadSeq) return;
   render();
+
+  // 4. Aufräumarbeiten erst danach, blockieren die Anzeige nicht mehr
+  try{
+    await migrateOldPhotos();
+    await purgeOldArchive();
+    if(seq === loadSeq) render();
+  }catch(err){}
 }
 
 async function purgeOldArchive(){
@@ -558,10 +629,10 @@ async function migrateOldPhotos(){
   await saveTasks();
 }
 
-async function loadPhotos(ids){
+async function loadPhotos(ids, opts){
   const results = await Promise.all(ids.map(async id=>{
     try{
-      const r = await window.storage.get('task-photo:'+id, true);
+      const r = await withTimeout(window.storage.get('task-photo:'+id, true, opts), 15000);
       return [id, r && r.value ? JSON.parse(r.value) : null];
     }catch(err){
       return [id, null];
@@ -876,6 +947,21 @@ document.getElementById('resetLink').onclick = async ()=>{
   await Promise.all(ids.map(id=>window.storage.delete('task-photo:'+id, true).catch(()=>{})));
   showToast('Zurückgesetzt');
 };
+
+document.getElementById('reloadBtn').onclick = function(){
+  this.classList.add('spinning');
+  setTimeout(()=>location.reload(), 150);
+};
+
+// Wird die App aus dem Hintergrund geholt, Aufgaben automatisch neu abrufen
+let hiddenSince = null;
+document.addEventListener('visibilitychange', ()=>{
+  if(document.hidden){ hiddenSince = Date.now(); return; }
+  if(hiddenSince && Date.now() - hiddenSince > 30000 && !overlay.classList.contains('show')){
+    loadTasks();
+  }
+  hiddenSince = null;
+});
 
 loadTasks();
 </script>
