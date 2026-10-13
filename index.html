@@ -193,6 +193,7 @@
     margin:0 0 2px;
   }
   .archive-item .mini-btn{flex:none; padding:8px 14px;}
+  .archive-actions{display:flex; gap:6px; flex:none;}
   .card{
     background:var(--card);
     border-radius:4px;
@@ -313,6 +314,7 @@
   .mini-btn.done{background:var(--teal); color:#fff;}
   .mini-btn.after{background:var(--ochre-soft); color:var(--ochre);}
   .mini-btn.edit{background:var(--sage-soft); color:var(--sage);}
+  .mini-btn.reopen{background:var(--ochre-soft); color:var(--ochre);}
   .mini-btn.del{background:transparent; color:var(--pin); border:1px solid rgba(200,90,74,0.3);}
 
   .overlay{
@@ -679,6 +681,7 @@ function render(){
     : '';
 
   document.querySelectorAll('[data-done]').forEach(b=>b.onclick = ()=>markDone(b.dataset.done));
+  document.querySelectorAll('[data-reopen]').forEach(b=>b.onclick = ()=>reopenTask(b.dataset.reopen));
   document.querySelectorAll('[data-quick-input]').forEach(inp=>inp.onchange = (e)=>quickAddPhoto(inp.dataset.quickInput, e.target.files[0]));
   document.querySelectorAll('[data-edit]').forEach(b=>b.onclick = ()=>openEditTask(b.dataset.edit));
   document.querySelectorAll('[data-del]').forEach(b=>b.onclick = ()=>deleteTask(b.dataset.del));
@@ -698,7 +701,10 @@ function openArchive(archived){
           <p class="archive-item-title">${t.title ? escapeHtml(t.title) : '<span class="no-title">Ohne Titel</span>'}</p>
           <p class="card-meta">${t.category} · erledigt am ${date}</p>
         </div>
-        <button class="mini-btn del" data-archive-del="${t.id}">Löschen</button>
+        <div class="archive-actions">
+          <button class="mini-btn reopen" data-archive-reopen="${t.id}">Öffnen</button>
+          <button class="mini-btn del" data-archive-del="${t.id}">Löschen</button>
+        </div>
       </div>`;
     }).join('')}
     <div class="sheet-actions">
@@ -707,6 +713,10 @@ function openArchive(archived){
   `;
   overlay.classList.add('show');
   document.getElementById('closeArchive').onclick = closeSheet;
+  document.querySelectorAll('[data-archive-reopen]').forEach(b=>b.onclick = async ()=>{
+    closeSheet();
+    await reopenTask(b.dataset.archiveReopen);
+  });
   document.querySelectorAll('[data-archive-del]').forEach(b=>b.onclick = async ()=>{
     await deleteTask(b.dataset.archiveDel);
     closeSheet();
@@ -755,7 +765,9 @@ function cardHtml(t){
       </div>
     </div>
     <div class="card-actions">
-      ${t.status==='offen' ? `<button class="mini-btn done" data-done="${t.id}">Als erledigt markieren</button>` : ''}
+      ${t.status==='offen'
+        ? `<button class="mini-btn done" data-done="${t.id}">Als erledigt markieren</button>`
+        : `<button class="mini-btn reopen" data-reopen="${t.id}">Wieder öffnen</button>`}
       <button class="mini-btn edit" data-edit="${t.id}">Bearbeiten</button>
       <button class="mini-btn del" data-del="${t.id}">Löschen</button>
     </div>
@@ -776,6 +788,17 @@ async function markDone(id){
   render();
   await saveTasks();
   showToast('Aufgabe erledigt');
+}
+
+async function reopenTask(id){
+  const t = tasks.find(x=>x.id===id);
+  if(!t) return;
+  t.status = 'offen';
+  delete t.doneAt;
+  render();
+  await saveTasks();
+  loadPhotos([id]).then(render);
+  showToast('Aufgabe wieder offen');
 }
 
 async function deleteTask(id){
