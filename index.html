@@ -329,16 +329,44 @@
     background:var(--card);
     width:100%;
     border-radius:20px 20px 0 0;
-    padding:22px 20px max(28px, env(safe-area-inset-bottom));
-    max-height:55vh;
+    max-height:88vh;
+    max-height:88dvh;
+    display:flex;
+    flex-direction:column;
+    position:relative;
+    overflow:hidden;
+  }
+  .sheet-body{
     overflow-y:auto;
+    -webkit-overflow-scrolling:touch;
+    padding:22px 20px 0;
   }
   .sheet h2{
     font-family:'Caveat', cursive;
     font-size:1.7rem;
     color:var(--teal-dark);
     margin:0 0 14px;
+    padding-right:44px;
   }
+  .sheet-close{
+    position:absolute;
+    top:20px;
+    right:16px;
+    width:34px;
+    height:34px;
+    border-radius:50%;
+    border:none;
+    background:rgba(63,106,99,0.12);
+    color:var(--teal-dark);
+    font-size:1rem;
+    font-weight:600;
+    cursor:pointer;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    z-index:2;
+  }
+  .sheet-close:active{transform:scale(0.92);}
   .field{margin-bottom:14px;}
   .field label{
     display:block;
@@ -384,6 +412,11 @@
     display:flex;
     gap:10px;
     margin-top:20px;
+    position:sticky;
+    bottom:0;
+    background:var(--card);
+    padding:12px 0 max(20px, env(safe-area-inset-bottom));
+    box-shadow:0 -10px 14px -10px rgba(43,46,41,0.18);
   }
   .sheet-actions .btn{flex:1; box-shadow:none;}
   .btn-cancel{background:transparent; color:var(--ink-soft); border:1.5px solid rgba(0,0,0,0.15);}
@@ -517,6 +550,14 @@ function showToast(msg){
   toastEl.textContent = msg;
   toastEl.classList.add('show');
   setTimeout(()=>toastEl.classList.remove('show'), 2200);
+}
+
+function showSheet(){
+  // Inhalt in scrollbaren Bereich packen, Schließen Kreuz oben rechts ergänzen
+  const content = sheet.innerHTML;
+  sheet.innerHTML = `<button class="sheet-close" id="sheetClose" aria-label="Schließen">✕</button><div class="sheet-body">${content}</div>`;
+  document.getElementById('sheetClose').onclick = closeSheet;
+  overlay.classList.add('show');
 }
 
 function closeSheet(){
@@ -711,7 +752,7 @@ function openArchive(archived){
       <button class="btn btn-cancel" id="closeArchive">Schließen</button>
     </div>
   `;
-  overlay.classList.add('show');
+  showSheet();
   document.getElementById('closeArchive').onclick = closeSheet;
   document.querySelectorAll('[data-archive-reopen]').forEach(b=>b.onclick = async ()=>{
     closeSheet();
@@ -846,7 +887,7 @@ function openEditTask(id){
       <button class="btn btn-save" id="saveEdit">Speichern</button>
     </div>
   `;
-  overlay.classList.add('show');
+  showSheet();
 
   document.getElementById('editBeforeInput').onchange = async (e)=>{
     const file = e.target.files[0];
@@ -918,7 +959,7 @@ function openTaskForm(withPhoto){
       <button class="btn btn-save" id="saveTask">Aufgabe anlegen</button>
     </div>
   `;
-  overlay.classList.add('show');
+  showSheet();
 
   if(withPhoto){
     document.getElementById('photoInput').onchange = async (e)=>{
